@@ -1,20 +1,20 @@
 {
   "manifest_version": "0.4",
-  "name": "whatsapp-mcp",
-  "display_name": "Personal WhatsApp MCP for Claude, built directly on whatsmeow",
+  "name": "badhusha-whatsapp-mcp",
+  "display_name": "Badhusha WhatsApp MCP",
   "version": "0.4.0",
-  "description": "Personal WhatsApp MCP for Claude, built directly on whatsmeow. Encrypted-at-rest storage, Whisper voice-note transcription, accent-insensitive Spanish search, vault-native CRM integration, send-confirmation safety.",
+  "description": "Personal WhatsApp MCP for ChatGPT, Grok, Claude and MCP-compatible clients.",
   "author": {
-    "name": "adelaidasofia",
-    "url": "https://github.com/adelaidasofia"
+    "name": "Badhusha K",
+    "url": "https://github.com/wazimBadsha"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/adelaidasofia/whatsapp-mcp.git"
+    "url": "https://github.com/wazimBadsha/whatsapp-mcp-plugin.git"
   },
-  "homepage": "https://github.com/adelaidasofia/whatsapp-mcp",
-  "documentation": "https://github.com/adelaidasofia/whatsapp-mcp#readme",
-  "support": "https://github.com/adelaidasofia/whatsapp-mcp/issues",
+  "homepage": "https://github.com/wazimBadsha/whatsapp-mcp-plugin",
+  "documentation": "https://github.com/wazimBadsha/whatsapp-mcp-plugin#readme",
+  "support": "https://github.com/wazimBadsha/whatsapp-mcp-plugin/issues",
   "license": "MIT",
   "keywords": [
     "mcp",
