@@ -1,0 +1,80 @@
+[project]
+name = "adelaidasofia-whatsapp-mcp"
+version = "0.4.0"
+description = "Python MCP server for whatsapp-mcp. Consumes the Go bridge REST API and exposes tools to Claude."
+# readme: inline text + Homepage link in [project.urls] below. The full README
+# at the repo root cannot be referenced via `readme = "../README.md"` because
+# setuptools 77+ rejects file refs outside the package root (see
+# docs/TROUBLESHOOTING.md "uv sync fails on the Python MCP server"). The
+# publish pipeline includes its own staging; this field is what local CI sees.
+readme = { text = "Python MCP server for whatsapp-mcp. The Go bridge ships separately; see the full README at https://github.com/adelaidasofia/whatsapp-mcp for install + threat model + tool reference.", content-type = "text/markdown" }
+# Upper bound is deliberate and load-bearing: fastmcp and python-frontmatter
+# both stop declaring support at 3.13, and the CI matrix exercises exactly this
+# range. Without a bound, `uv run` picks the newest interpreter on the machine,
+# which is how an untested 3.14 would silently become the runtime for every
+# user. Widening this range means widening the `python:` matrix in
+# .github/workflows/tests.yml in the same commit, or the new version ships
+# declared-but-never-run.
+#
+# Do NOT reintroduce a .python-version file here. One pinning 3.11 shipped from
+# the initial scaffold until 2026-08-19: because it is an exact request rather
+# than a floor, uv refused any other interpreter and downloaded a managed 3.11
+# even on machines already running 3.12. When that download failed (corporate
+# network), the MCP simply never started, with no whatsapp entry in /mcp and no
+# error pointing here. Let this range do the work instead.
+requires-python = ">=3.11,<3.14"
+license = "MIT"
+authors = [
+    { name = "Adelaida Diaz-Roa" },
+]
+
+dependencies = [
+    "fastmcp>=3.2.4",
+    "httpx>=0.27.0",
+    "python-frontmatter>=1.1.0",
+    "unidecode>=1.3.8",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.30.0"]
+
+[project.scripts]
+# Wired so `uvx adelaidasofia-whatsapp-mcp` launches the MCP server.
+# Matches the runtimeHint in server.json. The Go bridge is a separate
+# runtime prereq; the README documents both halves of the install.
+adelaidasofia-whatsapp-mcp = "main:main"
+
+[project.urls]
+Homepage = "https://github.com/adelaidasofia/whatsapp-mcp"
+Repository = "https://github.com/adelaidasofia/whatsapp-mcp"
+Issues = "https://github.com/adelaidasofia/whatsapp-mcp/issues"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# main.py ships as a single top-level module. uvx consumers reach it via
+# the entry point above, not via direct import, so the top-level-name
+# collision risk is bounded to people who explicitly `import main` from
+# their own code (vanishingly rare; if it becomes an issue, the rename to
+# a proper package directory lands cleanly with a tool.setuptools.packages
+# swap).
+py-modules = ["main"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+]
+
+[tool.pytest.ini_options]
+# Tests live under tests/ as a separate directory.
+# pythonpath = ["."] lets `from main import ...` resolve since main.py ships as
+# a top-level module per [tool.setuptools] py-modules above (not a package).
+testpaths = ["tests"]
+pythonpath = ["."]
+# -q: keep parameterized output compact (we have ~50+ scrubber cases).
+# -r s: show skip reasons (the known-gap corpus surfaces uncovered attack classes).
+addopts = "-q -r s"
