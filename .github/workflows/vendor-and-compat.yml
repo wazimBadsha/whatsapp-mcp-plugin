@@ -1,0 +1,234 @@
+name: Vendor WhatsApp MCP and add ChatGPT/Grok compatibility
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  vendor-and-patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout owned repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Vendor source baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/upstream
+          git clone --depth 1 https://github.com/adelaidasofia/whatsapp-mcp.git /tmp/upstream
+          cp -a /tmp/upstream/. .
+          git checkout -- LICENSE
+          git checkout -- .github/workflows/vendor-and-compat.yml || true
+
+      - name: Apply owned-project metadata and MCP compatibility
+        shell: python
+        run: |
+          from pathlib import Path
+          import json
+          import re
+
+          license_text = Path("LICENSE").read_text(encoding="utf-8")
+
+          py = Path("whatsapp-mcp-server/main.py")
+          text = py.read_text(encoding="utf-8")
+
+          marker = '''AUDIT_LOG_PATH = os.environ.get(
+              "WHATSAPP_AUDIT_LOG_PATH",
+              str(Path.home() / ".claude" / "whatsapp-mcp" / "audit.log"),
+          )
+          '''
+          compat = '''
+          # --- MCP transport compatibility -------------------------------------------
+          # stdio remains the safe local default. Set MCP_TRANSPORT=http for
+          # Streamable HTTP clients such as ChatGPT and Grok, or sse for legacy
+          # clients. HTTP deployment must be protected by HTTPS/auth at the edge.
+          MCP_TRANSPORT = os.environ.get("MCP_TRANSPORT", "stdio").strip().lower()
+          MCP_HOST = os.environ.get("MCP_HOST", "127.0.0.1")
+          MCP_PORT = int(os.environ.get("MCP_PORT", "8000"))
+          MCP_PATH = os.environ.get("MCP_PATH", "/mcp")
+          '''
+          if "MCP_TRANSPORT = os.environ.get" not in text:
+              text = text.replace(marker, marker + compat)
+
+          old_main = '''def main() -> None:
+              """Console-script entry point. Wired in pyproject.toml [project.scripts]
+              so uvx adelaidasofia-whatsapp-mcp launches the server, and exposed for
+              direct invocation via python -m main or python main.py."""
+              mcp.run()
+          '''
+          new_main = '''def main() -> None:
+              """Start the MCP server using stdio, Streamable HTTP, or legacy SSE."""
+              if MCP_TRANSPORT in {"http", "streamable-http", "streamable_http"}:
+                  mcp.run(
+                      transport="http",
+                      host=MCP_HOST,
+                      port=MCP_PORT,
+                      path=MCP_PATH,
+                  )
+              elif MCP_TRANSPORT == "sse":
+                  mcp.run(
+                      transport="sse",
+                      host=MCP_HOST,
+                      port=MCP_PORT,
+                      path=MCP_PATH,
+                  )
+              else:
+                  mcp.run()
+          '''
+          if old_main in text:
+              text = text.replace(old_main, new_main)
+          else:
+              text = re.sub(r"def main\(\) -> None:.*?\n\n\nif __name__ == \"__main__\":", new_main.rstrip() + "\n\n\nif __name__ == \"__main__\":", text, flags=re.S)
+          py.write_text(text, encoding="utf-8")
+
+          p = Path("whatsapp-mcp-server/pyproject.toml")
+          text = p.read_text(encoding="utf-8")
+          text = text.replace("name = \"adelaidasofia-whatsapp-mcp\"", "name = \"badhusha-whatsapp-mcp\"")
+          text = text.replace(
+              "description = \"Python MCP server for whatsapp-mcp. Consumes the Go bridge REST API and exposes tools to Claude.\"",
+              "description = \"Personal WhatsApp MCP server for MCP-compatible clients including ChatGPT, Grok, Claude, and local MCP hosts.\""
+          )
+          text = text.replace("{ name = \"Adelaida Diaz-Roa\" },", "{ name = \"Badhusha K\" },")
+          text = text.replace("adelaidasofia-whatsapp-mcp = \"main:main\"", "badhusha-whatsapp-mcp = \"main:main\"")
+          text = text.replace("https://github.com/adelaidasofia/whatsapp-mcp", "https://github.com/wazimBadsha/whatsapp-mcp-plugin")
+          p.write_text(text, encoding="utf-8")
+
+          manifest = Path("manifest.json")
+          if manifest.exists():
+              data = json.loads(manifest.read_text(encoding="utf-8"))
+              data["name"] = "badhusha-whatsapp-mcp"
+              data["display_name"] = "Badhusha WhatsApp MCP — ChatGPT, Grok, Claude and MCP-compatible clients"
+              data["description"] = "Personal WhatsApp MCP with local encrypted storage, prompt-injection scrubbing, draft-and-confirm sending, audit logging and multi-client MCP transport support."
+              data["author"] = {"name": "Badhusha K", "url": "https://github.com/wazimBadsha"}
+              data["repository"] = {"type": "git", "url": "https://github.com/wazimBadsha/whatsapp-mcp-plugin.git"}
+              data["homepage"] = "https://github.com/wazimBadsha/whatsapp-mcp-plugin"
+              data["documentation"] = "https://github.com/wazimBadsha/whatsapp-mcp-plugin#readme"
+              data["support"] = "https://github.com/wazimBadsha/whatsapp-mcp-plugin/issues"
+              manifest.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+          server = Path("server.json")
+          if server.exists():
+              data = json.loads(server.read_text(encoding="utf-8"))
+              data["name"] = "io.github.wazimBadsha/whatsapp-mcp"
+              data["title"] = "Badhusha WhatsApp MCP"
+              data["description"] = "Personal WhatsApp MCP for ChatGPT, Grok, Claude and other MCP-compatible clients."
+              data["repository"] = {"url": "https://github.com/wazimBadsha/whatsapp-mcp-plugin", "source": "github"}
+              data["packages"] = []
+              server.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+          env = Path(".env.example")
+          if env.exists():
+              text = env.read_text(encoding="utf-8")
+              additions = """
+          # MCP transport: stdio (default), http (Streamable HTTP), or sse (legacy).
+          MCP_TRANSPORT=stdio
+          MCP_HOST=127.0.0.1
+          MCP_PORT=8000
+          MCP_PATH=/mcp
+          """
+              if "MCP_TRANSPORT=" not in text:
+                  text += "\n" + additions
+              env.write_text(text, encoding="utf-8")
+
+          mcp_json = Path(".mcp.json")
+          if mcp_json.exists():
+              data = json.loads(mcp_json.read_text(encoding="utf-8"))
+              server_cfg = data.get("mcpServers", {}).get("whatsapp", {})
+              server_cfg.setdefault("env", {})
+              server_cfg["env"]["MCP_TRANSPORT"] = "stdio"
+              data.setdefault("mcpServers", {})["whatsapp"] = server_cfg
+              mcp_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+          readme = Path("README.md")
+          text = readme.read_text(encoding="utf-8")
+          text = text.replace("https://github.com/adelaidasofia/whatsapp-mcp", "https://github.com/wazimBadsha/whatsapp-mcp-plugin")
+          text = text.replace("adelaidasofia/whatsapp-mcp", "wazimBadsha/whatsapp-mcp-plugin")
+          text = text.replace("adelaidasofia-whatsapp-mcp", "badhusha-whatsapp-mcp")
+          text = text.replace("Personal WhatsApp MCP for Claude", "Personal WhatsApp MCP for ChatGPT, Grok, Claude and MCP-compatible clients")
+          notice = (
+              "> Repository attribution: This repository contains code derived from the MIT-licensed "
+              "adelaidasofia/whatsapp-mcp project. Original copyright and license notices are retained. "
+              "Badhusha K's repository-specific integration and compatibility work is maintained here.\n\n"
+          )
+          if "Repository attribution:" not in text:
+              text = text.replace("# whatsapp-mcp\n", "# whatsapp-mcp\n\n" + notice, 1)
+          readme.write_text(text, encoding="utf-8")
+
+          docs = Path("docs/CHATGPT-GROK.md")
+          docs.parent.mkdir(parents=True, exist_ok=True)
+          docs.write_text("""# ChatGPT and Grok compatibility
+
+This repository keeps stdio as the default for local MCP hosts and adds
+Streamable HTTP support for remote MCP clients.
+
+## ChatGPT
+
+ChatGPT custom MCP apps connect to remote MCP servers. Run the server with:
+
+    MCP_TRANSPORT=http MCP_HOST=0.0.0.0 MCP_PORT=8000 MCP_PATH=/mcp uv run whatsapp-mcp-server/main.py
+
+Expose the endpoint through HTTPS and authentication before connecting it to
+ChatGPT. The endpoint is normally:
+
+    https://YOUR-DOMAIN.example/mcp
+
+ChatGPT Developer Mode / custom app setup can then scan the MCP endpoint.
+
+## Grok
+
+Grok supports custom MCP connectors and remote MCP tools. Streamable HTTP is
+the preferred transport:
+
+    MCP_TRANSPORT=http MCP_HOST=0.0.0.0 MCP_PORT=8000 MCP_PATH=/mcp uv run whatsapp-mcp-server/main.py
+
+Use the resulting HTTPS /mcp endpoint as the custom MCP connector URL in Grok.
+For local-only development, use a secure tunnel rather than exposing port 8000
+directly.
+
+## Claude and local hosts
+
+The default stdio configuration remains available:
+
+    MCP_TRANSPORT=stdio uv run whatsapp-mcp-server/main.py
+
+## Security
+
+This server handles private WhatsApp data and write-capable messaging tools.
+Do not expose an unauthenticated HTTP endpoint to the public internet. Put the
+MCP endpoint behind HTTPS and an appropriate authentication/authorization
+layer, and restrict the exposed tools to the minimum required set.
+""", encoding="utf-8")
+
+          Path("LICENSE").write_text(license_text, encoding="utf-8")
+
+      - name: Verify compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'MCP_TRANSPORT' whatsapp-mcp-server/main.py
+          grep -q 'transport="http"' whatsapp-mcp-server/main.py
+          test -f docs/CHATGPT-GROK.md
+          test -f LICENSE
+          python -m py_compile whatsapp-mcp-server/main.py
+
+      - name: Commit vendored source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "Vendor WhatsApp MCP and add ChatGPT/Grok compatibility"
+          git push origin HEAD:main
