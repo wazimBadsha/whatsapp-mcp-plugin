@@ -55,6 +55,14 @@ AUDIT_LOG_ENABLED = os.environ.get("WHATSAPP_AUDIT_LOG", "true").lower() in (
     "yes",
     "on",
 )
+
+# MCP transport compatibility: stdio is the safe local default; http enables
+# Streamable HTTP for remote MCP clients such as ChatGPT and Grok.
+MCP_TRANSPORT = os.environ.get("MCP_TRANSPORT", "stdio").strip().lower()
+MCP_HOST = os.environ.get("MCP_HOST", "127.0.0.1")
+MCP_PORT = int(os.environ.get("MCP_PORT", "8000"))
+MCP_PATH = os.environ.get("MCP_PATH", "/mcp")
+
 AUDIT_LOG_PATH = os.environ.get(
     "WHATSAPP_AUDIT_LOG_PATH",
     str(Path.home() / ".claude" / "whatsapp-mcp" / "audit.log"),
@@ -789,10 +797,13 @@ async def set_online_presence(online: bool = True) -> dict[str, Any]:
 
 
 def main() -> None:
-    """Console-script entry point. Wired in pyproject.toml [project.scripts]
-    so `uvx adelaidasofia-whatsapp-mcp` launches the server, and exposed for
-    direct invocation via `python -m main` or `python main.py`."""
-    mcp.run()
+    """Start the MCP server using stdio, Streamable HTTP, or legacy SSE."""
+    if MCP_TRANSPORT in {"http", "streamable-http", "streamable_http"}:
+        mcp.run(transport="http", host=MCP_HOST, port=MCP_PORT, path=MCP_PATH)
+    elif MCP_TRANSPORT == "sse":
+        mcp.run(transport="sse", host=MCP_HOST, port=MCP_PORT, path=MCP_PATH)
+    else:
+        mcp.run()
 
 
 if __name__ == "__main__":
