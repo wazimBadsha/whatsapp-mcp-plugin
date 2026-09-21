@@ -233,3 +233,5 @@ layer, and restrict the exposed tools to the minimum required set.
           fi
           git commit -m "Vendor WhatsApp MCP and add ChatGPT/Grok compatibility"
           git push origin HEAD:main
+
+# Trigger full-source vendor sync from upstream baseline.
