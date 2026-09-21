@@ -1,7 +1,7 @@
 [project]
 name = "badhusha-whatsapp-mcp"
 version = "0.4.0"
-description = "Personal WhatsApp MCP server for ChatGPT, Grok, Claude and MCP-compatible clients."
+description = "Personal WhatsApp MCP server for ChatGPT, Grok, ChatGPT, Grok, Claude and MCP-compatible clients."
 # readme: inline text + Homepage link in [project.urls] below. The full README
 # at the repo root cannot be referenced via `readme = "../README.md"` because
 # setuptools 77+ rejects file refs outside the package root (see
@@ -39,15 +39,15 @@ dependencies = [
 openai = ["openai>=1.30.0"]
 
 [project.scripts]
-# Wired so `uvx adelaidasofia-whatsapp-mcp` launches the MCP server.
+# Wired so `uvx badhusha-whatsapp-mcp` launches the MCP server.
 # Matches the runtimeHint in server.json. The Go bridge is a separate
 # runtime prereq; the README documents both halves of the install.
 badhusha-whatsapp-mcp = "main:main"
 
 [project.urls]
-Homepage = "https://github.com/adelaidasofia/whatsapp-mcp"
-Repository = "https://github.com/adelaidasofia/whatsapp-mcp"
-Issues = "https://github.com/adelaidasofia/whatsapp-mcp/issues"
+Homepage = "https://github.com/wazimBadsha/whatsapp-mcp-plugin"
+Repository = "https://github.com/wazimBadsha/whatsapp-mcp-plugin"
+Issues = "https://github.com/wazimBadsha/whatsapp-mcp-plugin/issues"
 
 [build-system]
 requires = ["setuptools>=68"]
