@@ -1,0 +1,324 @@
+name: whatsmeow-upgrade-review
+# Enforcement layer for SECURITY.md item 6: "whatsmeow pinned; upgrades require
+# manual diff review."
+#
+# Triggers when a PR modifies whatsapp-bridge/go.mod or go.sum. Detects whether
+# the go.mau.fi/whatsmeow pin specifically moved. If yes, clones upstream
+# (github.com/tulir/whatsmeow), produces a commit log between old and new pins,
+# posts it as a PR comment, and applies the whatsmeow-diff-review-required
+# label.
+#
+# Reviewer responsibility: read the diff, then either (a) add the
+# whatsmeow-diff-reviewed label to authorize merge, or (b) request changes.
+#
+# Pin parsing lives in .github/scripts/whatsmeow-pin.sh, NOT inline here, so it
+# can be unit tested. .github/scripts/whatsmeow-pin.test.sh asserts both
+# directions and runs as the `pin-parser-selftest` job below. Rationale: the
+# original inline implementation returned empty for EVERY input (its regex began
+# with a dash, so grep parsed it as an option bundle), which tripped the
+# indeterminate fail-safe on every go.mod PR. A gate that fires on everything is
+# a gate reviewers learn to ignore.
+#
+# Security note: all untrusted inputs (base ref, head sha, PR number, repo
+# full-name) are passed via env: bindings and consumed via "$VAR" inside the
+# shell scripts. No direct ${{ }} interpolation inside run: blocks. This is
+# the SAFE pattern documented at
+# https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
+#
+# go.mod content is itself PR-controlled, so values parsed out of it are NOT
+# written verbatim to GITHUB_OUTPUT: `changed` is whitelisted against a fixed
+# set and the SHAs are validated as exactly 12 hex chars before export.
+
+on:
+  pull_request:
+    # `labeled`/`unlabeled` matter: the review-gate job below clears itself when
+    # a maintainer adds `whatsmeow-diff-reviewed`, and without these types that
+    # label would never trigger a re-run, leaving the PR red with no way forward.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches: [main]
+    paths:
+      - 'whatsapp-bridge/go.mod'
+      - 'whatsapp-bridge/go.sum'
+      - '.github/scripts/whatsmeow-pin.sh'
+      - '.github/scripts/whatsmeow-pin.test.sh'
+      - '.github/workflows/whatsmeow-upgrade-review.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  # Two new trigger types (labeled/unlabeled) mean a maintainer toggling labels
+  # can queue several full runs, each doing two checkouts and a complete clone
+  # of upstream whatsmeow. Cancel superseded ones. Scoped to pull_request only:
+  # cancelling a push-to-main run would leave its checks never reporting.
+  group: whatsmeow-review-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+
+jobs:
+  # The gate's own logic is gated. If the parser regresses, this job goes red
+  # rather than the gate silently reverting to flag-everything (or, worse,
+  # flag-nothing).
+  pin-parser-selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Negative + positive controls for the pin parser
+        run: bash .github/scripts/whatsmeow-pin.test.sh
+
+  diff-review:
+    runs-on: ubuntu-latest
+    needs: pin-parser-selftest
+    env:
+      UPSTREAM_REPO: tulir/whatsmeow
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Extract old + new whatsmeow pins
+        id: pins
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -e
+          git fetch origin "$BASE_REF"
+          git show "origin/${BASE_REF}:whatsapp-bridge/go.mod" > /tmp/old-go.mod 2>/dev/null \
+            || : > /tmp/old-go.mod
+          cp whatsapp-bridge/go.mod /tmp/new-go.mod
+
+          bash .github/scripts/whatsmeow-pin.sh /tmp/old-go.mod /tmp/new-go.mod > /tmp/pins.txt
+          echo "--- parser output ---"
+          cat /tmp/pins.txt
+
+          get() { grep "^$1=" /tmp/pins.txt | head -n1 | cut -d= -f2-; }
+          CHANGED=$(get changed)
+          OLD_SHA=$(get old_sha)
+          NEW_SHA=$(get new_sha)
+
+          # Whitelist the classification. Anything unexpected fails safe toward
+          # human review rather than toward silent merge.
+          case "$CHANGED" in
+            yes|no|indeterminate) ;;
+            *) CHANGED=indeterminate ;;
+          esac
+
+          # Validate SHA shape before export; empty is legitimate (a semver-tag
+          # pin has no commit SHA) and the log step degrades accordingly.
+          printf '%s' "$OLD_SHA" | grep -qE '^[0-9a-f]{12}$' || OLD_SHA=""
+          printf '%s' "$NEW_SHA" | grep -qE '^[0-9a-f]{12}$' || NEW_SHA=""
+
+          {
+            echo "changed=$CHANGED"
+            echo "old_sha=$OLD_SHA"
+            echo "new_sha=$NEW_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+          case "$CHANGED" in
+            indeterminate) echo "::warning::Could not parse the whatsmeow pin on one or both sides. Treating as needs-review." ;;
+            no)  echo "whatsmeow pin unchanged. Nothing to review." ;;
+            yes) echo "whatsmeow pin moved, or a replace directive targeting it changed." ;;
+          esac
+
+      - name: Fetch upstream commit log
+        # Both SHAs required: a semver-tag move or a replace-directive change is
+        # still `changed=yes` but has no pseudo-version commit range to diff.
+        if: steps.pins.outputs.changed == 'yes' && steps.pins.outputs.old_sha != '' && steps.pins.outputs.new_sha != ''
+        id: upstream
+        env:
+          OLD_SHA: ${{ steps.pins.outputs.old_sha }}
+          NEW_SHA: ${{ steps.pins.outputs.new_sha }}
+        run: |
+          set -e
+          git clone --quiet "https://github.com/${UPSTREAM_REPO}.git" /tmp/whatsmeow
+          cd /tmp/whatsmeow
+
+          if ! git cat-file -e "${OLD_SHA}" 2>/dev/null; then
+            echo "::error::Old SHA $OLD_SHA not found in upstream ${UPSTREAM_REPO}"
+            exit 1
+          fi
+          if ! git cat-file -e "${NEW_SHA}" 2>/dev/null; then
+            echo "::error::New SHA $NEW_SHA not found in upstream ${UPSTREAM_REPO}"
+            exit 1
+          fi
+
+          {
+            git log --no-merges --pretty=format:'%h  %s  (%an, %ad)' --date=short \
+              "${OLD_SHA}..${NEW_SHA}"
+            echo ""
+            echo "---"
+            echo ""
+            git diff --shortstat "${OLD_SHA}..${NEW_SHA}"
+          } > /tmp/upstream-log.txt
+
+          COMMIT_COUNT=$(git rev-list --no-merges --count "${OLD_SHA}..${NEW_SHA}")
+          echo "commit_count=$COMMIT_COUNT" >> "$GITHUB_OUTPUT"
+
+          # Truncate to ~50KB to stay safely under GitHub's 65KB comment limit.
+          head -c 50000 /tmp/upstream-log.txt > /tmp/upstream-log-truncated.txt
+          if [ "$(wc -c < /tmp/upstream-log.txt)" -gt 50000 ]; then
+            echo "" >> /tmp/upstream-log-truncated.txt
+            echo "...[truncated, see workflow log for full diff]" >> /tmp/upstream-log-truncated.txt
+          fi
+
+      - name: Surface diff in workflow summary
+        if: steps.pins.outputs.changed == 'yes'
+        env:
+          OLD_SHA: ${{ steps.pins.outputs.old_sha }}
+          NEW_SHA: ${{ steps.pins.outputs.new_sha }}
+          COMMIT_COUNT: ${{ steps.upstream.outputs.commit_count }}
+        run: |
+          {
+            echo "## whatsmeow upgrade detected"
+            echo ""
+            echo "- **Old pin sha:** \`${OLD_SHA:-n/a}\`"
+            echo "- **New pin sha:** \`${NEW_SHA:-n/a}\`"
+            if [ -n "${OLD_SHA}" ] && [ -n "${NEW_SHA}" ]; then
+              echo "- **Commits between:** ${COMMIT_COUNT:-unknown}"
+              echo "- **Upstream:** https://github.com/tulir/whatsmeow/compare/${OLD_SHA}...${NEW_SHA}"
+            else
+              echo "- **Note:** no pseudo-version commit range available (semver-tag pin, or a \`replace\` directive changed). Review the go.mod diff directly."
+            fi
+            echo ""
+            if [ -f /tmp/upstream-log-truncated.txt ]; then
+              echo "### Commit log"
+              echo ""
+              echo '```'
+              cat /tmp/upstream-log-truncated.txt
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post PR comment + apply review-required label
+        # `github.event.action` guard: without it a maintainer adding the
+        # reviewed label re-runs this step and posts a SECOND identical
+        # commit-log comment, and every later label change posts another.
+        if: steps.pins.outputs.changed == 'yes' && github.event.pull_request.head.repo.full_name == github.repository && github.event.action != 'labeled' && github.event.action != 'unlabeled'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          OLD_SHA: ${{ steps.pins.outputs.old_sha }}
+          NEW_SHA: ${{ steps.pins.outputs.new_sha }}
+          COMMIT_COUNT: ${{ steps.upstream.outputs.commit_count }}
+        run: |
+          set -e
+          {
+            echo "## whatsmeow upgrade detected"
+            echo ""
+            if [ -n "${OLD_SHA}" ] && [ -n "${NEW_SHA}" ]; then
+              echo "Pin moved \`${OLD_SHA}\` -> \`${NEW_SHA}\` (${COMMIT_COUNT:-unknown} commits)."
+              echo ""
+              echo "Compare: https://github.com/tulir/whatsmeow/compare/${OLD_SHA}...${NEW_SHA}"
+            else
+              echo "The whatsmeow pin changed in a form with no pseudo-version commit range:"
+              echo "a semver-tag move, or a \`replace\` directive targeting the module."
+              echo ""
+              echo "A \`replace\` can point whatsmeow at arbitrary code while the require line"
+              echo "stays byte-identical, so review the \`go.mod\` diff directly."
+            fi
+            echo ""
+            if [ -f /tmp/upstream-log-truncated.txt ]; then
+              echo "<details>"
+              echo "<summary>Commit log</summary>"
+              echo ""
+              echo '```'
+              cat /tmp/upstream-log-truncated.txt
+              echo '```'
+              echo ""
+              echo "</details>"
+              echo ""
+            fi
+            echo "Per SECURITY.md item 6, this requires manual diff review."
+            echo "Reviewer: read the changes above, then add label \`whatsmeow-diff-reviewed\` to authorize merge."
+          } > /tmp/pr-comment.md
+
+          # Ensure both labels exist
+          gh label create whatsmeow-diff-review-required \
+            --description "PR moves the whatsmeow pin; manual diff review required per SECURITY.md item 6" \
+            --color B60205 --force --repo "$REPO" 2>/dev/null || true
+          gh label create whatsmeow-diff-reviewed \
+            --description "whatsmeow upgrade has been diff-reviewed; safe to merge" \
+            --color 0E8A16 --force --repo "$REPO" 2>/dev/null || true
+
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file /tmp/pr-comment.md
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label whatsmeow-diff-review-required
+
+      - name: Indeterminate-pin warning comment
+        if: steps.pins.outputs.changed == 'indeterminate' && github.event.pull_request.head.repo.full_name == github.repository && github.event.action != 'labeled' && github.event.action != 'unlabeled'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body \
+            "::warning:: Could not parse the whatsmeow pin in go.mod. Treating this PR as needs-manual-review out of caution. Per SECURITY.md item 6."
+          gh label create whatsmeow-diff-review-required \
+            --description "PR moves the whatsmeow pin; manual diff review required per SECURITY.md item 6" \
+            --color B60205 --force --repo "$REPO" 2>/dev/null || true
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label whatsmeow-diff-review-required
+
+      # -- Make a skipped gate visibly different from a passing one -----------
+      # Everything above either writes (a PR comment, a label) or writes to the
+      # run summary, and all of it is guarded on
+      # `head.repo.full_name == github.repository`, because `on: pull_request`
+      # gives a FORK PR a read-only GITHUB_TOKEN and `gh pr comment` would
+      # hard-fail. Measured on PR #74 (2026-08-25): a real four-month whatsmeow
+      # bump arrived from a fork, every write step skipped, the 104-commit log
+      # went only to the run summary, and this job reported PASS in 6 seconds.
+      # A skipped gate and a passing gate emitted the same green.
+      #
+      # This step makes those two states differ. It enforces with a READ, so it
+      # needs no token permission and behaves identically on forks and
+      # same-repo PRs. Membership is tested with `contains()` over the label
+      # ARRAY rather than by splitting a joined string in the shell: GitHub
+      # permits a comma inside a label name, so a `join(..., ',')` + split
+      # predicate really asks "does some comma-separated segment equal X",
+      # which a label literally named `zzz,whatsmeow-diff-reviewed` satisfies.
+      # `contains()` compares whole elements. It also keeps the check out of a
+      # pipeline, avoiding a `pipefail` + `grep -q` SIGPIPE hazard.
+      #
+      # WHAT THIS DOES NOT DO -- stated plainly, because a control documented
+      # as stronger than it is was the original bug:
+      #   * It does not BLOCK a merge. `main` carries no branch protection and
+      #     this check is not required, so it produces a visible red X that a
+      #     maintainer can merge straight past. Making it binding needs branch
+      #     protection plus a required check, and this workflow is
+      #     path-filtered -- a required check fed by a path-filtered workflow
+      #     never posts on PRs that miss those paths, and GitHub then parks
+      #     them at "Expected" forever. That needs an always-run shim first.
+      #   * It does not survive its own deletion. `on: pull_request` runs the
+      #     workflow file from the MERGE COMMIT, so a PR may bump the pin and
+      #     delete this step in the same commit and report green. That is a
+      #     property of every `pull_request` workflow in this repo, not of this
+      #     step, and the answer to it is branch protection plus review of
+      #     workflow changes -- not a cleverer step.
+      # Both are tracked. Neither is a reason to leave the silent-green in.
+      - name: Review gate -- pin moved, so require the diff-reviewed label
+        if: >-
+          (steps.pins.outputs.changed == 'yes' || steps.pins.outputs.changed == 'indeterminate')
+          && !contains(github.event.pull_request.labels.*.name, 'whatsmeow-diff-reviewed')
+        env:
+          CHANGED: ${{ steps.pins.outputs.changed }}
+          COMMIT_COUNT: ${{ steps.upstream.outputs.commit_count }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # The commit log lands in the run summary only when the pin parsed
+          # cleanly. On `indeterminate` there is no summary and, on a fork, no
+          # comment either -- so point at the run itself, which always exists,
+          # rather than at a summary that may not.
+          if [ "${CHANGED}" = "yes" ]; then
+            where="the commit log in this run's summary: ${RUN_URL}"
+            detail="${COMMIT_COUNT:-an unknown number of} upstream commits"
+          else
+            where="the diff yourself -- the pin could not be parsed, so no commit log was generated: ${RUN_URL}"
+            detail="an UNPARSEABLE pin (treated as needing review out of caution)"
+          fi
+          echo "::error title=whatsmeow diff review required::The whatsmeow pin moved (changed=${CHANGED}, ${detail}) and no 'whatsmeow-diff-reviewed' label is present. SECURITY.md item 6 requires a maintainer to read the upstream diff before merge. Read ${where} then add the 'whatsmeow-diff-reviewed' label to this PR, which re-runs this check and clears it."
+          exit 1
