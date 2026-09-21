@@ -1,21 +1,25 @@
-# whatsapp-mcp
+# Badhusha WhatsApp MCP
+
+> Independent repository maintained by **Badhusha K**, with source derived from the MIT-licensed upstream project. Original copyright and license notices are retained in `LICENSE`; repository-specific integration and compatibility work is documented in `NOTICE.md`.
+
+Remote MCP compatibility: see [`docs/CHATGPT-GROK.md`](docs/CHATGPT-GROK.md) for ChatGPT and Grok Streamable HTTP setup.
 
 
 <!-- mycelium-badges:start -->
 
 <p>
-  <a href="https://github.com/adelaidasofia/whatsapp-mcp/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/adelaidasofia/whatsapp-mcp?color=blue"></a>
-  <a href="https://github.com/adelaidasofia/whatsapp-mcp/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/adelaidasofia/whatsapp-mcp?color=eab308"></a>
-  <a href="https://github.com/adelaidasofia/whatsapp-mcp/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/adelaidasofia/whatsapp-mcp"></a>
-  <a href="https://github.com/adelaidasofia/whatsapp-mcp/issues"><img alt="Open issues" src="https://img.shields.io/github/issues/adelaidasofia/whatsapp-mcp"></a>
-  <a href="https://pypi.org/project/adelaidasofia-whatsapp-mcp/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/adelaidasofia-whatsapp-mcp?color=blue&label=pypi"></a>
-  <a href="https://pypi.org/project/adelaidasofia-whatsapp-mcp/"><img alt="PyPI downloads" src="https://img.shields.io/pypi/dm/adelaidasofia-whatsapp-mcp?color=blue&label=downloads"></a>
+  <a href="https://github.com/wazimBadsha/whatsapp-mcp-plugin/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/wazimBadsha/whatsapp-mcp-plugin?color=blue"></a>
+  <a href="https://github.com/wazimBadsha/whatsapp-mcp-plugin/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/wazimBadsha/whatsapp-mcp-plugin?color=eab308"></a>
+  <a href="https://github.com/wazimBadsha/whatsapp-mcp-plugin/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/wazimBadsha/whatsapp-mcp-plugin"></a>
+  <a href="https://github.com/wazimBadsha/whatsapp-mcp-plugin/issues"><img alt="Open issues" src="https://img.shields.io/github/issues/wazimBadsha/whatsapp-mcp-plugin"></a>
+  <a href="https://pypi.org/project/badhusha-whatsapp-mcp/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/badhusha-whatsapp-mcp?color=blue&label=pypi"></a>
+  <a href="https://pypi.org/project/badhusha-whatsapp-mcp/"><img alt="PyPI downloads" src="https://img.shields.io/pypi/dm/badhusha-whatsapp-mcp?color=blue&label=downloads"></a>
   <a href="https://myceliumai.co"><img alt="Built by Mycelium AI" src="https://img.shields.io/badge/built_by-Mycelium_AI-15B89A"></a>
 </p>
 
 <!-- mycelium-badges:end -->
 
-<!-- mcp-name: io.github.adelaidasofia/whatsapp-mcp -->
+<!-- mcp-name: io.github.wazimBadsha/whatsapp-mcp-plugin -->
 
 A WhatsApp MCP server for Claude, built directly on [whatsmeow](https://github.com/tulir/whatsmeow). Encrypted at rest, prompt-injection-scrubbed, draft-and-confirm on every send, full audit trail, daily CI security gates. Actively maintained.
 
@@ -61,7 +65,7 @@ Two components, both local:
 
 Open Claude Code, paste:
 
-    /plugin marketplace add adelaidasofia/whatsapp-mcp
+    /plugin marketplace add wazimBadsha/whatsapp-mcp-plugin
     /plugin install whatsapp-mcp@whatsapp-mcp
 
 This installs the Python MCP server side. The Go bridge still needs the one-time QR pairing flow with your phone — see the legacy install block below for those steps.
@@ -152,12 +156,12 @@ See [CHANGELOG.md](CHANGELOG.md) for full history.
 
 ## MCP Registry
 
-Published on the [official MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.adelaidasofia/whatsapp-mcp) under `io.github.adelaidasofia/whatsapp-mcp`. Two live channels:
+Published on the [official MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.wazimBadsha/whatsapp-mcp-plugin) under `io.github.wazimBadsha/whatsapp-mcp-plugin`. Two live channels:
 
 - **`.mcpb` bundle** (canonical, recommended) — one-click install in Claude Desktop / Cursor / any [MCPB](https://github.com/modelcontextprotocol/mcpb)-aware client. Published as a GitHub release artifact at [releases/latest/download/whatsapp-mcp.mcpb](../../releases/latest/download/whatsapp-mcp.mcpb). The release manifest carries the SHA256 for tamper detection.
-- **PyPI package** (`adelaidasofia-whatsapp-mcp`) — historical; available via `uvx adelaidasofia-whatsapp-mcp` for stdio-installer flows. The unprefixed names (`whatsapp-mcp`, `whatsapp-mcp-server`) are taken by unrelated projects on PyPI, hence the username-prefixed namespace.
+- **PyPI package** (`badhusha-whatsapp-mcp`) — historical; available via `uvx badhusha-whatsapp-mcp` for stdio-installer flows. The unprefixed names (`whatsapp-mcp`, `whatsapp-mcp-server`) are taken by unrelated projects on PyPI, hence the username-prefixed namespace.
 
-The verification marker `mcp-name: io.github.adelaidasofia/whatsapp-mcp` is embedded in this README (HTML comment near the top) so the registry can verify package-to-server ownership at publish time.
+The verification marker `mcp-name: io.github.wazimBadsha/whatsapp-mcp-plugin` is embedded in this README (HTML comment near the top) so the registry can verify package-to-server ownership at publish time.
 
 **Publishing pipeline:** built and shipped via the Mycelium MCP publishing pipeline (two-phase: `.mcpb` bundle build, then `gh release` + `mcp-publisher publish`). The same pipeline produced all 16 sibling MCPs in this family.
 
